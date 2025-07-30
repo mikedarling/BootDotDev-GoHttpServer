@@ -2,10 +2,8 @@ package routes
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/mikedarling/BootDotDev-GoHttpServer/internal/auth"
@@ -17,60 +15,48 @@ import (
 func MapAuthRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 	basePath := "/api"
 
-	MapPost(mux, fmt.Sprintf("%s/login", basePath), func(rw http.ResponseWriter, req *http.Request) {
+	MapPost(mux, fmt.Sprintf("%s/login", basePath), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-		rw.Header().Set("Content-Type", "application/json")
-
-		decoder := json.NewDecoder(req.Body)
-		params := models.UserCredentialsParameters{}
-		parseErr := decoder.Decode(&params)
+		params, parseErr := parseParams[models.UserCredentialsParameters](r)
 		if parseErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(parseErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		user, dbErr := cfg.DbQueries.GetUserByEmail(req.Context(), params.Email)
+		user, dbErr := cfg.DbQueries.GetUserByEmail(r.Context(), params.Email)
 		if dbErr != nil {
-			rw.WriteHeader(401)
-			rw.Write([]byte("dbErr: Incorrect email or password"))
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("dbErr: Incorrect email or password"))
 			return
 		}
 
 		if params.Email != user.Email {
-			rw.WriteHeader(401)
-			rw.Write([]byte("user email does not match: Incorrect email or password"))
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("user email does not match: incorrect email or password"))
 			return
 		}
 
 		hasingErr := auth.CheckPasswordHash(params.Password, user.HashedPassword)
 		if hasingErr != nil {
-			rw.WriteHeader(401)
-			rw.Write([]byte("Check Password Hash: Incorrect email or password"))
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("Check Password Hash: Incorrect email or password"))
 			return
 		}
 
 		token, tokenErr := auth.MakeJWT(user.ID, cfg.JwtSecret, 60*time.Second)
 		if tokenErr != nil {
-			rw.WriteHeader(500)
-			rw.Write([]byte("Could not create JWT."))
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Could not create JWT."))
 			return
 		}
 
 		refreshToken, refreshTokenErr := auth.MakeRefreshToken()
 		if refreshTokenErr != nil {
-			rw.WriteHeader(500)
-			rw.Write([]byte("Could not create Refresh Token."))
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Could not create Refresh Token."))
 			return
 		}
 
@@ -81,11 +67,10 @@ func MapAuthRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			UserID:    user.ID,
 			ExpiresAt: refreshExpiration,
 		}
-
-		_, dbRefreshTokenErr := cfg.DbQueries.SaveToken(req.Context(), queryParams)
+		_, dbRefreshTokenErr := cfg.DbQueries.SaveToken(r.Context(), queryParams)
 		if dbRefreshTokenErr != nil {
-			rw.WriteHeader(500)
-			rw.Write([]byte("Could not create Refresh Token."))
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Could not create Refresh Token."))
 			return
 		}
 
@@ -98,104 +83,69 @@ func MapAuthRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			RefreshToken: refreshToken,
 			IsChirpyRed:  user.IsChirpyRed,
 		}
-
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(200)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusOK)
 	})
 
 	MapPost(mux, fmt.Sprintf("%s/refresh", basePath), func(rw http.ResponseWriter, req *http.Request) {
-
 		token, tokenErr := auth.GetBearerToken(req.Header)
 		if tokenErr != nil {
-			resp := models.ErrorResponse{
-				Error: tokenErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(tokenErr, http.StatusUnauthorized)
+			rw.Write(body)
+			rw.WriteHeader(status)
 			return
 		}
 
 		tokenRecord, getDbTokenErr := cfg.DbQueries.GetUserFromRefreshToken(req.Context(), token)
 		if getDbTokenErr != nil {
-			rw.WriteHeader(401)
+			rw.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
 		if tokenRecord.RevokedAt.Valid && time.Now().UTC().After(tokenRecord.RevokedAt.Time) {
-			rw.WriteHeader(401)
+			rw.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
 		if time.Now().UTC().After(tokenRecord.ExpiresAt) {
-			rw.WriteHeader(401)
+			rw.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
-		bearer, bearerErr := auth.MakeJWT(tokenRecord.UserID, os.Getenv("JWT_SECRET"), time.Hour)
+		bearer, bearerErr := auth.MakeJWT(tokenRecord.UserID, cfg.JwtSecret, time.Hour)
 		if bearerErr != nil {
 			rw.Write([]byte("Could not create bearer token"))
-			rw.WriteHeader(500)
+			rw.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
 		resp := models.RefreshTokenResponse{
 			Token: bearer,
 		}
-
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(200)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusOK)
 	})
 
-	MapPost(mux, fmt.Sprintf("%s/revoke", basePath), func(rw http.ResponseWriter, req *http.Request) {
-		token, tokenErr := auth.GetBearerToken(req.Header)
+	MapPost(mux, fmt.Sprintf("%s/revoke", basePath), func(w http.ResponseWriter, r *http.Request) {
+		token, tokenErr := auth.GetBearerToken(r.Header)
 		if tokenErr != nil {
-			resp := models.ErrorResponse{
-				Error: tokenErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(tokenErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		tokenRecord, getDbTokenErr := cfg.DbQueries.GetUserFromRefreshToken(req.Context(), token)
+		tokenRecord, getDbTokenErr := cfg.DbQueries.GetUserFromRefreshToken(r.Context(), token)
 		if getDbTokenErr != nil {
-			rw.WriteHeader(401)
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
 		if tokenRecord.RevokedAt.Valid && time.Now().UTC().After(tokenRecord.RevokedAt.Time) {
-			rw.WriteHeader(401)
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
 		if time.Now().UTC().After(tokenRecord.ExpiresAt) {
-			rw.WriteHeader(401)
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
@@ -206,23 +156,14 @@ func MapAuthRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 				Time:  time.Now().UTC(),
 			},
 		}
-		_, revokeTokenErr := cfg.DbQueries.RevokeRefreshToken(req.Context(), queryParams)
+		_, revokeTokenErr := cfg.DbQueries.RevokeRefreshToken(r.Context(), queryParams)
 		if revokeTokenErr != nil {
-			resp := models.ErrorResponse{
-				Error: revokeTokenErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(revokeTokenErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		rw.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	})
 }

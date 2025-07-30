@@ -22,7 +22,18 @@ func MapObservabilityRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 	})
 
 	MapPost(mux, "/admin/reset", func(w http.ResponseWriter, r *http.Request) {
-		cfg.ResetApp()
+		successErr := cfg.ResetApp(r)
+		if successErr != nil {
+			if successErr.Error() == "operation not allowed on this environment" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
 	})
 
 	MapGet(mux, "/api/healthz", func(rw http.ResponseWriter, req *http.Request) {

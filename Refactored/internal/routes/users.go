@@ -1,9 +1,7 @@
 package routes
 
 import (
-	"encoding/json"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/mikedarling/BootDotDev-GoHttpServer/internal/auth"
@@ -15,44 +13,22 @@ import (
 func MapUserRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 	basePath := "/api/users"
 
-	MapPost(mux, basePath, func(rw http.ResponseWriter, req *http.Request) {
-		decoder := json.NewDecoder(req.Body)
-		params := models.UserCredentialsParameters{}
-		parseErr := decoder.Decode(&params)
+	MapPost(mux, basePath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-		rw.Header().Set("Content-Type", "application/json")
-
+		params, parseErr := parseParams[models.UserCredentialsParameters](r)
 		if parseErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(parseErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		hash, hashingErr := auth.HashPassword(params.Password)
-
 		if hashingErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(hashingErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -60,22 +36,11 @@ func MapUserRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			Email:          params.Email,
 			HashedPassword: hash,
 		}
-
-		user, dbErr := cfg.DbQueries.CreateUser(req.Context(), queryParams)
-
+		user, dbErr := cfg.DbQueries.CreateUser(r.Context(), queryParams)
 		if dbErr != nil {
-			resp := models.ErrorResponse{
-				Error: dbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(dbErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -86,87 +51,41 @@ func MapUserRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			Email:       user.Email,
 			IsChirpyRed: user.IsChirpyRed,
 		}
-
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(201)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusCreated)
 	})
 
-	MapPut(mux, basePath, func(rw http.ResponseWriter, req *http.Request) {
-		rw.Header().Set("Content-Type", "application/json")
+	MapPut(mux, basePath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-		token, tokenErr := auth.GetBearerToken(req.Header)
+		token, tokenErr := auth.GetBearerToken(r.Header)
 		if tokenErr != nil {
-			resp := models.ErrorResponse{
-				Error: tokenErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(tokenErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		userId, validateErr := auth.ValidateJWT(token, cfg.JwtSecret)
 		if validateErr != nil {
-			resp := models.ErrorResponse{
-				Error: validateErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(validateErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		decoder := json.NewDecoder(req.Body)
-		params := models.UserCredentialsParameters{}
-		parseErr := decoder.Decode(&params)
+		params, parseErr := parseParams[models.UserCredentialsParameters](r)
 		if parseErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(parseErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		hash, hashingErr := auth.HashPassword(params.Password)
 		if hashingErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(hashingErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -176,21 +95,11 @@ func MapUserRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			UpdatedAt:      time.Now().UTC(),
 			ID:             userId,
 		}
-
-		updatedUser, dbErr := cfg.DbQueries.UpdateUser(req.Context(), queryParams)
+		updatedUser, dbErr := cfg.DbQueries.UpdateUser(r.Context(), queryParams)
 		if dbErr != nil {
-			resp := models.ErrorResponse{
-				Error: dbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(dbErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -200,84 +109,46 @@ func MapUserRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			UpdatedAt: updatedUser.UpdatedAt,
 			Email:     updatedUser.Email,
 		}
-
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(200)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusOK)
 	})
 
-	MapPost(mux, "/api/polka/webhooks", func(rw http.ResponseWriter, req *http.Request) {
+	MapPost(mux, "/api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-		rw.Header().Set("Content-Type", "application/json")
-
-		apiKey, apiKeyErr := auth.GetAPIKey(req.Header)
+		apiKey, apiKeyErr := auth.GetAPIKey(r.Header)
 		if apiKeyErr != nil {
-			resp := models.ErrorResponse{
-				Error: apiKeyErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(apiKeyErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		if apiKey != os.Getenv("POLKA_KEY") {
-			rw.WriteHeader(401)
+		if apiKey != cfg.PolkaKey {
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
-		decoder := json.NewDecoder(req.Body)
-		params := models.PolkaWebhookParamters{}
-		parseErr := decoder.Decode(&params)
-		if parseErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+		params, parseParamsErr := parseParams[models.PolkaWebhookParamters](r)
+		if parseParamsErr != nil {
+			status, body := returnJsonError(parseParamsErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		if params.Event != "user.upgraded" {
-			rw.WriteHeader(204)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
-		_, dbErr := cfg.DbQueries.UpgradeUserById(req.Context(), params.Data.UserId)
+		_, dbErr := cfg.DbQueries.UpgradeUserById(r.Context(), params.Data.UserId)
 		if dbErr != nil {
-			resp := models.ErrorResponse{
-				Error: dbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(404)
-			rw.Write(data)
+			status, body := returnJsonError(dbErr, http.StatusNotFound)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		rw.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	})
 }

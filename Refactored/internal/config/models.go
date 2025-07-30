@@ -11,4 +11,5 @@ type AppConfig struct {
 	DbQueries      database.Queries
 	JwtSecret      string
 	PolkaKey       string
+	Platform       string
 }

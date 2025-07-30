@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -18,27 +17,19 @@ import (
 func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 	basePath := "/api/chirps"
 
-	MapGet(mux, basePath, func(rw http.ResponseWriter, req *http.Request) {
-		queryParams := req.URL.Query()
+	MapGet(mux, basePath, func(w http.ResponseWriter, r *http.Request) {
+		queryParams := r.URL.Query()
 		authorId := queryParams.Get("author_id")
 
 		var userId uuid.UUID
 		var userIdParseErr error
+
 		if authorId != "" {
 			userId, userIdParseErr = uuid.Parse(authorId)
 			if userIdParseErr != nil {
-				resp := models.ErrorResponse{
-					Error: userIdParseErr.Error(),
-				}
-
-				data, marshalErr := json.Marshal(resp)
-				if marshalErr != nil {
-					rw.WriteHeader(500)
-					return
-				}
-
-				rw.WriteHeader(400)
-				rw.Write(data)
+				status, body := returnJsonError(userIdParseErr, http.StatusBadRequest)
+				w.WriteHeader(status)
+				w.Write(body)
 				return
 			}
 		}
@@ -47,9 +38,9 @@ func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 		var dbErr error
 
 		if uuid.Nil != userId {
-			chirps, dbErr = cfg.DbQueries.GetChirpsByUser(req.Context(), userId)
+			chirps, dbErr = cfg.DbQueries.GetChirpsByUser(r.Context(), userId)
 		} else {
-			chirps, dbErr = cfg.DbQueries.GetAllChirps(req.Context())
+			chirps, dbErr = cfg.DbQueries.GetAllChirps(r.Context())
 		}
 
 		sortOrder := queryParams.Get("sort")
@@ -58,18 +49,9 @@ func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 		}
 
 		if dbErr != nil {
-			resp := models.ErrorResponse{
-				Error: dbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(dbErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -85,48 +67,23 @@ func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			}
 		}
 
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(200)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusOK)
 	})
 
-	MapGet(mux, fmt.Sprintf("%s/{chirpID}", basePath), func(rw http.ResponseWriter, req *http.Request) {
-		chirpId, uuidParseErr := uuid.Parse(req.PathValue("chirpID"))
+	MapGet(mux, fmt.Sprintf("%s/{chirpID}", basePath), func(w http.ResponseWriter, r *http.Request) {
+		chirpId, uuidParseErr := uuid.Parse(r.PathValue("chirpID"))
 		if uuidParseErr != nil {
-			resp := models.ErrorResponse{
-				Error: uuidParseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(uuidParseErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		chirp, dbErr := cfg.DbQueries.GetChirp(req.Context(), chirpId)
+		chirp, dbErr := cfg.DbQueries.GetChirp(r.Context(), chirpId)
 		if dbErr != nil {
-			resp := models.ErrorResponse{
-				Error: dbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(404)
-			rw.Write(data)
+			status, body := returnJsonError(dbErr, http.StatusNotFound)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -137,183 +94,91 @@ func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			Body:      chirp.Body,
 			UserId:    chirp.UserID,
 		}
-
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(200)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusOK)
 	})
 
-	MapDelete(mux, fmt.Sprintf("%s/{chirpID}", basePath), func(rw http.ResponseWriter, req *http.Request) {
-		rw.Header().Set("Content-Type", "application/json")
+	MapDelete(mux, fmt.Sprintf("%s/{chirpID}", basePath), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-		token, tokenErr := auth.GetBearerToken(req.Header)
+		token, tokenErr := auth.GetBearerToken(r.Header)
 		if tokenErr != nil {
-			resp := models.ErrorResponse{
-				Error: tokenErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(tokenErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		userId, validateErr := auth.ValidateJWT(token, cfg.JwtSecret)
 		if validateErr != nil {
-			resp := models.ErrorResponse{
-				Error: validateErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(validateErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		chirpId, uuidParseErr := uuid.Parse(req.PathValue("chirpID"))
+		chirpId, uuidParseErr := uuid.Parse(r.PathValue("chirpID"))
 		if uuidParseErr != nil {
-			resp := models.ErrorResponse{
-				Error: uuidParseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(404)
-			rw.Write(data)
+			status, body := returnJsonError(uuidParseErr, http.StatusNotFound)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		chirp, chirpDbErr := cfg.DbQueries.GetChirpById(req.Context(), chirpId)
+		chirp, chirpDbErr := cfg.DbQueries.GetChirpById(r.Context(), chirpId)
 		if chirpDbErr != nil {
-			resp := models.ErrorResponse{
-				Error: chirpDbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(403)
-			rw.Write(data)
-			return
+			status, body := returnJsonError(chirpDbErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 		}
 
 		if chirp.UserID != userId {
-			rw.WriteHeader(403)
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 
-		delChirpErr := cfg.DbQueries.DeleteChirpById(req.Context(), chirp.ID)
+		delChirpErr := cfg.DbQueries.DeleteChirpById(r.Context(), chirp.ID)
 		if delChirpErr != nil {
-			resp := models.ErrorResponse{
-				Error: delChirpErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(403)
-			rw.Write(data)
+			status, body := returnJsonError(delChirpErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		rw.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
-	MapPost(mux, basePath, func(rw http.ResponseWriter, req *http.Request) {
-		rw.Header().Set("Content-Type", "application/json")
+	MapPost(mux, basePath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-		token, tokenErr := auth.GetBearerToken(req.Header)
+		token, tokenErr := auth.GetBearerToken(r.Header)
 		if tokenErr != nil {
-			resp := models.ErrorResponse{
-				Error: tokenErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(tokenErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		userId, validateErr := auth.ValidateJWT(token, cfg.JwtSecret)
 		if validateErr != nil {
-			resp := models.ErrorResponse{
-				Error: validateErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(401)
-			rw.Write(data)
+			status, body := returnJsonError(validateErr, http.StatusUnauthorized)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
-		decoder := json.NewDecoder(req.Body)
-		params := models.ChirpsParameters{}
-		parseErr := decoder.Decode(&params)
-		if parseErr != nil {
-			resp := models.ErrorResponse{
-				Error: parseErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+		params, parseParamsErr := parseParams[models.ChirpsParameters](r)
+		if parseParamsErr != nil {
+			status, body := returnJsonError(parseParamsErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
 		valid := len(params.Body) < 141
 		if !valid {
-			resp := models.ErrorResponse{
-				Error: "Chirp is too long",
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(tokenErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -342,20 +207,11 @@ func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			UserID: userId,
 		}
 
-		chirp, dbErr := cfg.DbQueries.CreateChirps(req.Context(), queryParams)
+		chirp, dbErr := cfg.DbQueries.CreateChirps(r.Context(), queryParams)
 		if dbErr != nil {
-			resp := models.ErrorResponse{
-				Error: dbErr.Error(),
-			}
-
-			data, marshalErr := json.Marshal(resp)
-			if marshalErr != nil {
-				rw.WriteHeader(500)
-				return
-			}
-
-			rw.WriteHeader(400)
-			rw.Write(data)
+			status, body := returnJsonError(dbErr, http.StatusBadRequest)
+			w.WriteHeader(status)
+			w.Write(body)
 			return
 		}
 
@@ -366,14 +222,6 @@ func MapChirpRoutes(mux *http.ServeMux, cfg *config.AppConfig) {
 			Body:      chirp.Body,
 			UserId:    chirp.UserID,
 		}
-
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			rw.WriteHeader(500)
-			return
-		}
-
-		rw.WriteHeader(201)
-		rw.Write(data)
+		returnJsonResponse(resp, http.StatusCreated)
 	})
 }

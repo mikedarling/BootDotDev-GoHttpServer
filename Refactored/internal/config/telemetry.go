@@ -1,8 +1,8 @@
 package config
 
 import (
+	"errors"
 	"net/http"
-	"os"
 )
 
 func (cfg *AppConfig) IncrementServerHits(next http.Handler) http.Handler {
@@ -12,16 +12,16 @@ func (cfg *AppConfig) IncrementServerHits(next http.Handler) http.Handler {
 	})
 }
 
-func (cfg *AppConfig) ResetApp() http.Handler {
-	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		if os.Getenv("PLATFORM") != "dev" {
-			rw.WriteHeader(403)
-			return
-		}
+func (cfg *AppConfig) ResetApp(r *http.Request) error {
+	if cfg.Platform != "dev" {
+		return errors.New("operation not allowed on this environment")
+	}
 
-		cfg.DbQueries.DeleteUsers(req.Context())
+	deleteUsersErr := cfg.DbQueries.DeleteUsers(r.Context())
+	if deleteUsersErr != nil {
+		return deleteUsersErr
+	}
 
-		cfg.FileServerHits.Store(0)
-		rw.WriteHeader(200)
-	})
+	cfg.FileServerHits.Store(0)
+	return nil
 }
